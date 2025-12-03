@@ -4,33 +4,64 @@ on: [workflow_dispatch]
 jobs:
   build-and-test:
     runs-on: windows-latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_TRIPLET: x64-windows
 
     steps:
     - uses: actions/checkout@v4
       with:
         repository: hxbb00/3dtiles
 
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      id: cache-vcpkg
-      with:
-        path: ./vcpkg
-        key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/build.rs') }}
-        restore-keys: |
-          ${{ runner.os }}-vcpkg-
-
-    - name: Install dependencies on Windows
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+    - name: Debug paths
       run: |
-        git clone https://github.com/microsoft/vcpkg.git
-        ./vcpkg/bootstrap-vcpkg.bat
-        ./vcpkg/vcpkg install gdal:x64-windows-release
-        ./vcpkg/vcpkg install osg:x64-windows-release
-        tree ./vcpkg/installed /F /A
+        echo GITHUB_WORKSPACE=${{ github.workspace }}
+        echo VCPKG_ROOT=%VCPKG_ROOT%
+        echo WORKDIR=%CD%
+        if exist "%VCPKG_ROOT%" (
+          echo "VCPKG_ROOT exists, listing:"
+          dir "%VCPKG_ROOT%" /b
+        ) else (
+          echo "VCPKG_ROOT not found (expected on first run)"
+        )
+      shell: cmd
+
+    - name: Setup vcpkg
+      run: |
+        echo "vcpkg.exe not found, setting up vcpkg..."
+          if not exist "%VCPKG_ROOT%" (
+            echo "Cloning vcpkg..."
+            git clone https://github.com/microsoft/vcpkg.git "%VCPKG_ROOT%"
+          ) else (
+            echo "VCPKG_ROOT exists but incomplete, checking for .git..."
+            if not exist "%VCPKG_ROOT%\.git" (
+              echo "No .git found, removing incomplete directory..."
+              rmdir /s /q "%VCPKG_ROOT%"
+              echo "Cloning vcpkg..."
+              git clone https://github.com/microsoft/vcpkg.git "%VCPKG_ROOT%"
+            ) else (
+              echo "Git repository exists, updating..."
+              cd /d "%VCPKG_ROOT%"
+              git pull origin master
+            )
+          )
+          echo "Bootstrapping vcpkg..."
+          "%VCPKG_ROOT%\bootstrap-vcpkg.bat"
+      shell: cmd
+
+    - name: Verify vcpkg installation
+      run: |
+        if not exist "%VCPKG_ROOT%\vcpkg.exe" (
+          echo "ERROR: vcpkg.exe not found at %VCPKG_ROOT%\vcpkg.exe"
+          exit /b 1
+        )
+        echo "vcpkg.exe found, verifying installation..."
+        "%VCPKG_ROOT%\vcpkg.exe" version
+      shell: cmd
 
     - name: Build
       run: |
-        cargo build --verbose --release
+        cargo build -vv --release
         cp target/release/_3dtile.exe bin/3dtile.exe
 
     - name: Upload artifact
